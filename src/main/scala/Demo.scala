@@ -4,21 +4,28 @@ import io.finch._
 import io.finch.circe._
 import io.circe.generic.auto._
 import io.circe.{Encoder, Json}
+import io.circe.jackson._
 
 object Main extends App {
 
 	case class Div(a: Int, b: Int)
-	case class Res(result: Int, extra: String)
+	case class Res(result: Int, extra: Headers)
 
-	val divByPath:   Endpoint[Div] = get(int :: int).as[Div]
-	val divByParams: Endpoint[Div] = get(param("a").as[Int] :: param("b").as[Int]).as[Div]
+  case class Headers(headers: Map[String, String])
+
 	val divByBody:   Endpoint[Div] = post(body).as[Div]
 
   val div: Endpoint[Res] = divByBody { d: Div =>
   	println(s"${d.a} / ${d.b}")
-  	val s = Http.newService("httpbin.org:443")
-  	val r = s(http.Request("/user-agent"))
-  	r.map (rep => Ok(Res(d.a / d.b, rep.contentString)))
+  	val ser = Http.client.withTls("httpbin.org").newService("httpbin.org:443")
+		val req = http.Request("/headers")
+
+  	ser(req) map { rep =>
+      decode[Headers](rep.contentString).fold(
+        err => InternalServerError(err),
+        hdr => Ok(Res(d.a / d.b, hdr))
+      )
+    }
   } handle {
     case e: ArithmeticException => BadRequest(e)
   }
@@ -30,7 +37,9 @@ object Main extends App {
 	  )
 	)
 
-  val service = ("div" / div).toService
+  val service = (
+		"div" / div
+	).toService
 
   Await.ready(Http.server.serve(":8081", service))
 }
